@@ -1,0 +1,26 @@
+{$SITE_ADDRESS:http://localhost} {
+    encode zstd gzip
+    request_body {
+        max_size 64KB
+    }
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+    @api path /api/* /admin /admin/*
+    handle @api {
+        reverse_proxy api:8000 {
+            # Overwrite untrusted client forwarding headers; API is not published directly.
+            header_up X-Forwarded-For {remote_host}
+        }
+    }
+    handle_path /media/* {
+        root * /srv/media
+        file_server
+    }
+    handle {
+        reverse_proxy web:3000
+    }
+}

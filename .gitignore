@@ -15,3 +15,7 @@ coverage/
 sites/
 media/
 backups/
+
+.coverage
+*.tsbuildinfo
+CLAUDE.md

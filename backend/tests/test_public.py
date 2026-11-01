@@ -91,3 +91,38 @@ def test_catalog_publication_filters_and_details(setup):
     assert client.get("/api/rentals/draft").status_code == 404
     assert client.get("/api/rentals/missing").status_code == 404
     assert client.get("/api/rentals?kind=invalid").status_code == 422
+
+def test_security_headers_and_rejected_origins(setup, payload):
+    client, _, _ = setup
+    response = client.get("/api/config")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert client.post("/api/leads", json=payload, headers={"Origin":"https://evil.example", "Idempotency-Key":str(uuid.uuid4())}).status_code == 403
+
+def test_large_request_rejected(setup):
+    assert setup[0].post("/api/leads", content="x" * 65537).status_code == 413
+
+def test_html_input_is_plain_data(setup, payload):
+    client, sessions, _ = setup
+    text = '<script>alert("x")</script>'
+    assert send(client, payload | {"message": text}).status_code == 201
+    with sessions() as db:
+        assert db.scalar(select(Lead)).message == text
+
+def test_collection_requires_version():
+    from app.config import Settings
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        Settings(secret_key="x" * 32, admin_password_hash="$argon2id$test", leads_enabled=True, privacy_version="")
+
+def test_simultaneous_retries_create_one_lead(setup, payload):
+    from concurrent.futures import ThreadPoolExecutor
+    client, sessions, _ = setup
+    key = str(uuid.uuid4())
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda _: send(client, payload, key), range(2)))
+    assert all(r.status_code == 201 for r in responses)
+    assert responses[0].json() == responses[1].json()
+    with sessions() as db:
+        assert db.scalar(select(func.count()).select_from(Lead)) == 1
+        assert db.scalar(select(func.count()).select_from(Notification)) == 1
