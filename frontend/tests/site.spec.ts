@@ -43,7 +43,7 @@ test("lead success and server failure preserve form", async ({ page }) => {
     r.fulfill({ status: 503, json: { detail: "Unavailable" } }),
   );
   await page.getByRole("button", { name: "Отправить заявку" }).click();
-  await expect(page.getByRole("alert")).toContainText("Не удалось");
+  await expect(page.getByRole("alert").filter({ hasText: "Не удалось" })).toContainText("Не удалось");
   await expect(page.getByLabel("Имя")).toHaveValue("Степан");
   await page.route("**/api/leads", (r) =>
     r.fulfill({ status: 201, json: { id: "example" } }),

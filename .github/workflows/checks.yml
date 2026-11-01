@@ -41,3 +41,37 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with: {name: browser-results, path: frontend/test-results, retention-days: 7}
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: {version: '0.11.19'}
+      - name: Prepare disposable configuration
+        run: |
+          uv sync --project backend --frozen
+          backend/.venv/bin/python - <<'PY'
+          from pathlib import Path
+          import secrets
+          from argon2 import PasswordHasher
+          config = Path('.env.example').read_text()
+          config = config.replace('replace-with-random-hex', secrets.token_hex(24))
+          config = config.replace('replace-with-at-least-32-random-characters', secrets.token_hex(32))
+          config = config.replace('$argon2id$replace-with-generated-hash', PasswordHasher().hash(secrets.token_hex(24)))
+          Path('.env').write_text(config)
+          Path('media').mkdir(exist_ok=True)
+          PY
+      - run: docker compose up --build -d --wait --wait-timeout 180
+      - name: Verify routing and services
+        run: |
+          curl --fail --retry 5 --retry-delay 2 http://localhost/api/health/ready
+          curl --fail http://localhost/api/rentals
+          curl --fail http://localhost/ > /tmp/home.html
+          grep -q 'Мабетэк' /tmp/home.html
+          curl --fail -L http://localhost/admin/ > /tmp/admin.html
+          grep -q 'password' /tmp/admin.html
+          ./scripts/backup.sh
+          docker compose exec -T db createdb -U mabetek restore_check
+          docker compose exec -T db pg_restore -U mabetek -d restore_check --no-owner < backups/db-*.dump
+      - if: always()
+        run: docker compose logs --tail=80 && docker compose down -v
